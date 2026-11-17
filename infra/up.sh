@@ -56,7 +56,7 @@ cat > scratch/github-trust.json <<JSON
 JSON
 cat > scratch/github-policy.json <<JSON
 {"Version": "2012-10-17", "Statement": [
-  {"Effect": "Allow", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::${BUCKET}/hotel/releases/*"},
+  {"Effect": "Allow", "Action": ["s3:PutObject", "s3:GetObject"], "Resource": "arn:aws:s3:::${BUCKET}/hotel/releases/*"},
   {"Effect": "Allow", "Action": ["sagemaker:DescribeModelPackageGroup", "sagemaker:CreateModelPackageGroup",
      "sagemaker:CreateModelPackage", "sagemaker:DescribeModelPackage", "sagemaker:UpdateModelPackage",
      "sagemaker:ListModelPackages"], "Resource": "*"},
