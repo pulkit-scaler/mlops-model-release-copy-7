@@ -19,7 +19,12 @@ done
 for v in $(aws sagemaker list-model-packages --model-package-group-name "$GROUP" --query 'ModelPackageSummaryList[].ModelPackageArn' --output text 2>/dev/null); do
   aws sagemaker delete-model-package --model-package-name "$v"
 done
-aws sagemaker delete-model-package-group --model-package-group-name "$GROUP" 2>/dev/null
+# The group goes only once SageMaker has finished deleting its versions, so retry for a minute
+for try in $(seq 12); do
+  aws sagemaker delete-model-package-group --model-package-group-name "$GROUP" 2>/dev/null && break
+  aws sagemaker describe-model-package-group --model-package-group-name "$GROUP" >/dev/null 2>&1 || break
+  sleep 5
+done
 aws s3 rm "s3://$BUCKET/hotel/releases/" --recursive --only-show-errors
 for role in hotel-release-github hotel-release-exec; do
   for p in $(aws iam list-role-policies --role-name "$role" --query 'PolicyNames' --output text 2>/dev/null); do
