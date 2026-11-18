@@ -21,7 +21,7 @@ read OWNER_ID REPO_ID <<< "$(curl -s -H "Authorization: Bearer $GH_TOKEN" "https
 PREFIX="repo:${GITHUB_REPO%/*}@${OWNER_ID}/${GITHUB_REPO#*/}@${REPO_ID}"
 
 # The bucket the model files go into. Quick setup makes the same one.
-aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null || aws s3 mb "s3://$BUCKET" --region "$AWS_REGION" >/dev/null
+aws s3api head-bucket --bucket "$BUCKET" >/dev/null 2>&1 || aws s3 mb "s3://$BUCKET" --region "$AWS_REGION" >/dev/null
 
 # The role the endpoint runs as: reads the model file, pulls AWS's container, writes logs,
 # and reads the alarms during a release. DescribeAlarms has to be on "*". Narrowed to the
