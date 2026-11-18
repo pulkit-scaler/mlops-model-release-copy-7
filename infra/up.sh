@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Makes what the pipeline needs in AWS: the bucket, the role the endpoint runs as,
-# GitHub's OIDC provider, and the role GitHub Actions assumes.
+# the two alarms that guard a release, GitHub's OIDC provider, and the role GitHub
+# Actions assumes.
 #
 #     infra/up.sh
 #
@@ -22,7 +23,9 @@ PREFIX="repo:${GITHUB_REPO%/*}@${OWNER_ID}/${GITHUB_REPO#*/}@${REPO_ID}"
 # The bucket the model files go into. Quick setup makes the same one.
 aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null || aws s3 mb "s3://$BUCKET" --region "$AWS_REGION" >/dev/null
 
-# The role the endpoint runs as: reads the model file, pulls AWS's container, writes logs
+# The role the endpoint runs as: reads the model file, pulls AWS's container, writes logs,
+# and reads the alarms during a release. DescribeAlarms has to be on "*". Narrowed to the
+# alarms' own names, SageMaker cannot read them and rolls every release back.
 cat > scratch/exec-trust.json <<'JSON'
 {"Version": "2012-10-17", "Statement": [{"Effect": "Allow",
   "Principal": {"Service": "sagemaker.amazonaws.com"}, "Action": "sts:AssumeRole"}]}
@@ -32,11 +35,25 @@ cat > scratch/exec-policy.json <<JSON
   {"Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::${BUCKET}/hotel/*"},
   {"Effect": "Allow", "Action": "ecr:GetAuthorizationToken", "Resource": "*"},
   {"Effect": "Allow", "Action": ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"], "Resource": "*"},
-  {"Effect": "Allow", "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"], "Resource": "*"}]}
+  {"Effect": "Allow", "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"], "Resource": "*"},
+  {"Effect": "Allow", "Action": "cloudwatch:DescribeAlarms", "Resource": "*"}]}
 JSON
 aws iam get-role --role-name hotel-release-exec >/dev/null 2>&1 ||
   aws iam create-role --role-name hotel-release-exec --assume-role-policy-document file://scratch/exec-trust.json >/dev/null
 aws iam put-role-policy --role-name hotel-release-exec --policy-name run-endpoint --policy-document file://scratch/exec-policy.json
+
+# The two alarms a release is watched by. Any server error from the endpoint in a
+# minute, or an average model time over half a second in two minutes running.
+aws cloudwatch put-metric-alarm --alarm-name hotel-release-errors \
+  --namespace AWS/SageMaker --metric-name Invocation5XXErrors \
+  --dimensions Name=EndpointName,Value=$ENDPOINT Name=VariantName,Value=AllTraffic \
+  --statistic Sum --period 60 --evaluation-periods 1 --threshold 1 \
+  --comparison-operator GreaterThanOrEqualToThreshold --treat-missing-data notBreaching
+aws cloudwatch put-metric-alarm --alarm-name hotel-release-latency \
+  --namespace AWS/SageMaker --metric-name ModelLatency \
+  --dimensions Name=EndpointName,Value=$ENDPOINT Name=VariantName,Value=AllTraffic \
+  --statistic Average --period 60 --evaluation-periods 2 --threshold 500000 \
+  --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching
 
 # GitHub's OIDC provider, once per account
 OIDC_ARN=$(aws iam list-open-id-connect-providers \
