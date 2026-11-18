@@ -4,6 +4,8 @@ export AWS_DEFAULT_REGION=$AWS_REGION
 export ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 export GROUP=hotel-cancellations                      # the model group in the registry
 export ENDPOINT=hotel-release                         # the endpoint callers use
+export INSTANCES=2                                    # machines behind it, so one can be the canary
+export ALARMS="hotel-release-errors hotel-release-latency"  # either one going off during a release rolls it back
 export BUCKET=sagemaker-$AWS_REGION-$ACCOUNT          # model files go under hotel/releases/<commit>/
 export EXEC_ROLE=arn:aws:iam::$ACCOUNT:role/hotel-release-exec   # the role the endpoint runs as
 # AWS's own XGBoost container, the one both earlier models were trained with

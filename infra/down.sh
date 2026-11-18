@@ -25,6 +25,7 @@ for try in $(seq 12); do
   aws sagemaker describe-model-package-group --model-package-group-name "$GROUP" >/dev/null 2>&1 || break
   sleep 5
 done
+aws cloudwatch delete-alarms --alarm-names $ALARMS
 aws s3 rm "s3://$BUCKET/hotel/releases/" --recursive --only-show-errors
 for role in hotel-release-github hotel-release-exec; do
   for p in $(aws iam list-role-policies --role-name "$role" --query 'PolicyNames' --output text 2>/dev/null); do
@@ -35,4 +36,4 @@ done
 OIDC_ARN=$(aws iam list-open-id-connect-providers \
   --query "OpenIDConnectProviderList[?ends_with(Arn, '/token.actions.githubusercontent.com')].Arn | [0]" --output text)
 [ "$OIDC_ARN" != None ] && aws iam delete-open-id-connect-provider --open-id-connect-provider-arn "$OIDC_ARN"
-echo "endpoint, registry entries, release files and roles deleted"
+echo "endpoint, registry entries, alarms, release files and roles deleted"

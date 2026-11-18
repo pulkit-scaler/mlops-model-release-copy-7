@@ -4,7 +4,8 @@
 #
 #     release/deploy.sh VERSION
 #
-# REJECT_PREVIOUS=1 marks the version it replaces Rejected instead of leaving it approved.
+# REJECT_PREVIOUS=1 marks the version it replaces Rejected instead of leaving it approved,
+# and moves all the traffic at once, because it is going back to a version that was live before.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source release/config.sh
@@ -25,10 +26,26 @@ aws sagemaker describe-model --model-name "$NAME" >/dev/null 2>&1 ||
     --primary-container "ModelPackageName=$ARN" >/dev/null
 aws sagemaker describe-endpoint-config --endpoint-config-name "$NAME" >/dev/null 2>&1 ||
   aws sagemaker create-endpoint-config --endpoint-config-name "$NAME" \
-    --production-variants "VariantName=AllTraffic,ModelName=$NAME,InstanceType=ml.m5.large,InitialInstanceCount=1" >/dev/null
+    --production-variants "VariantName=AllTraffic,ModelName=$NAME,InstanceType=ml.m5.large,InitialInstanceCount=$INSTANCES" >/dev/null
+
+# Blue/green. The new model starts on its own machines (green) beside the old ones (blue).
+# A release sends one machine's share of the traffic to green first, the canary, and waits
+# while the alarms watch it. Then green takes everything, and blue is kept for a while
+# before it is removed. If an alarm goes off before the end, SageMaker moves all the
+# traffic back to blue by itself.
+if [ -n "${REJECT_PREVIOUS:-}" ]; then
+  ROUTING='{"Type": "ALL_AT_ONCE", "WaitIntervalInSeconds": 0}'
+else
+  ROUTING='{"Type": "CANARY", "CanarySize": {"Type": "INSTANCE_COUNT", "Value": 1}, "WaitIntervalInSeconds": 300}'
+fi
+ALARM_LIST=$(printf '{"AlarmName": "%s"},' $ALARMS)
+DEPLOYMENT_CONFIG='{"BlueGreenUpdatePolicy": {"TrafficRoutingConfiguration": '$ROUTING',
+  "TerminationWaitInSeconds": 120, "MaximumExecutionTimeoutInSeconds": 1800},
+  "AutoRollbackConfiguration": {"Alarms": ['${ALARM_LIST%,}']}}'
 
 if aws sagemaker describe-endpoint --endpoint-name "$ENDPOINT" >/dev/null 2>&1; then
-  aws sagemaker update-endpoint --endpoint-name "$ENDPOINT" --endpoint-config-name "$NAME" >/dev/null
+  aws sagemaker update-endpoint --endpoint-name "$ENDPOINT" --endpoint-config-name "$NAME" \
+    --deployment-config "$DEPLOYMENT_CONFIG" >/dev/null
   echo "updating $ENDPOINT to version $VERSION"
 else
   aws sagemaker create-endpoint --endpoint-name "$ENDPOINT" --endpoint-config-name "$NAME" >/dev/null
@@ -36,6 +53,19 @@ else
 fi
 aws sagemaker wait endpoint-in-service --endpoint-name "$ENDPOINT"
 echo "$ENDPOINT in service after ${SECONDS}s"
+
+# In service does not mean this version. After an automatic rollback the endpoint is
+# in service again, on the old model, so ask which configuration it is running.
+LIVE=$(aws sagemaker describe-endpoint --endpoint-name "$ENDPOINT" --query EndpointConfigName --output text)
+if [ "$LIVE" != "$NAME" ]; then
+  REASON=$(aws sagemaker describe-endpoint --endpoint-name "$ENDPOINT" --query FailureReason --output text)
+  echo "rolled back: $ENDPOINT is still running $LIVE"
+  echo "reason: $REASON"
+  aws sagemaker update-model-package --model-package-arn "$ARN" --model-approval-status Rejected \
+    --approval-description "Rolled back during the release: ${REASON:0:900}" >/dev/null
+  echo "version $VERSION marked Rejected"
+  exit 1
+fi
 
 # The registry follows the endpoint, never the other way round
 for V in $(aws sagemaker list-model-packages --model-package-group-name "$GROUP" \
