@@ -1,3 +1,5 @@
 scratch/
 __pycache__/
 .venv/
+explore.ipynb
+.ipynb_checkpoints/
