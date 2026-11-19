@@ -1,6 +1,6 @@
 # Releasing a hotel cancellation model from a pipeline
 
-A model change goes through a pull request, a gate, a registry version, an approval and an endpoint update, all from code.
+A model change goes through a pull request, a gate, a registry version, an approval and an endpoint update, all from code. Every AWS step is Python with boto3.
 
 | Path | What it is |
 |---|---|
@@ -8,11 +8,14 @@ A model change goes through a pull request, a gate, a registry version, an appro
 | `models/baseline`, `weighted`, `retrained` | Three trained models to copy into `candidate/` |
 | `data/live.csv`, `live_labels.csv` | 1,000 bookings and how they really ended. The gate and the live check use them |
 | `release/gate.py` | Scores the candidate against the model on main |
-| `release/register.sh` | Uploads the file to S3 and registers a new version, Pending |
-| `release/deploy.sh` | Approves a version, releases it blue/green with a canary two alarms watch, sets the stage. Also the rollback |
-| `release/check_live.sh` | Sends the 1,000 bookings to the endpoint and counts |
-| `release/watch.sh` | Calls the endpoint every 5 seconds during a release and says which model answered |
-| `infra/up.sh`, `down.sh` | The roles, alarms, OIDC provider and bucket in AWS, and their removal |
+| `release/config.py` | The names and the boto3 clients every script shares |
+| `release/register.py` | Uploads the file to S3 and registers a new version, Pending |
+| `release/deploy.py` | Approves a version, releases it blue/green with a canary two alarms watch, sets the stage. Also the rollback |
+| `release/check_live.py` | Sends the 1,000 bookings to the endpoint and counts |
+| `release/watch.py` | Calls the endpoint every 5 seconds during a release and says which model answered |
+| `infra/up.py`, `down.py` | The roles, alarms, OIDC provider and bucket in AWS, and their removal |
+| `infra/protect.sh` | The GitHub ruleset that makes the gate required |
+| `requirements.txt` | boto3, the AWS SDK for Python, which every AWS step uses |
 | `.github/workflows/release.yml`, `rollback.yml` | The pipeline |
 
 Models, data and container come from the Hotel booking demand datasets (Antonio, de Almeida, Nunes, Data in Brief 22,
