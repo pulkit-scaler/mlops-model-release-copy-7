@@ -82,10 +82,7 @@ if endpoint["EndpointConfigName"] != name:
 for page in sm.get_paginator("list_model_packages").paginate(ModelPackageGroupName=GROUP):
     for summary in page["ModelPackageSummaryList"]:
         other = str(summary["ModelPackageVersion"])
-        if other == version:
-            continue
-        stage = sm.describe_model_package(ModelPackageName=summary["ModelPackageArn"]).get("ModelLifeCycle", {})
-        if stage.get("Stage") == "Production":
+        if other != version and summary.get("ModelLifeCycle", {}).get("Stage") == "Production":
             sm.update_model_package(
                 ModelPackageArn=summary["ModelPackageArn"],
                 ModelLifeCycle={"Stage": "Archived", "StageStatus": "Approved",
