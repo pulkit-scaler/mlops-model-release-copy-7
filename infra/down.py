@@ -42,14 +42,18 @@ for page in s3.get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix="
     for obj in page.get("Contents", []):
         s3.delete_object(Bucket=BUCKET, Key=obj["Key"])
 
-for role in ["hotel-release-github", "hotel-release-exec"]:
-    try:
-        for policy in iam.list_role_policies(RoleName=role)["PolicyNames"]:
-            iam.delete_role_policy(RoleName=role, PolicyName=policy)
-        iam.delete_role(RoleName=role)
-    except iam.exceptions.NoSuchEntityException:
-        pass
-for p in iam.list_open_id_connect_providers()["OpenIDConnectProviderList"]:
-    if p["Arn"].endswith("/token.actions.githubusercontent.com"):
-        iam.delete_open_id_connect_provider(OpenIDConnectProviderArn=p["Arn"])
-print("endpoint, registry entries, alarms, release files and roles deleted")
+try:
+    for key in iam.list_access_keys(UserName="hotel-release-github")["AccessKeyMetadata"]:
+        iam.delete_access_key(UserName="hotel-release-github", AccessKeyId=key["AccessKeyId"])
+    for policy in iam.list_user_policies(UserName="hotel-release-github")["PolicyNames"]:
+        iam.delete_user_policy(UserName="hotel-release-github", PolicyName=policy)
+    iam.delete_user(UserName="hotel-release-github")
+except iam.exceptions.NoSuchEntityException:
+    pass
+try:
+    for policy in iam.list_role_policies(RoleName="hotel-release-exec")["PolicyNames"]:
+        iam.delete_role_policy(RoleName="hotel-release-exec", PolicyName=policy)
+    iam.delete_role(RoleName="hotel-release-exec")
+except iam.exceptions.NoSuchEntityException:
+    pass
+print("endpoint, registry entries, alarms, release files, the endpoint's role and the GitHub user deleted")

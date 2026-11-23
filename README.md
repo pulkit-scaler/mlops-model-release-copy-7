@@ -13,7 +13,7 @@ A model change goes through a pull request, a gate, a registry version, an appro
 | `release/deploy.py` | Approves a version, releases it blue/green with a canary two alarms watch, sets the stage. Also the rollback |
 | `release/check_live.py` | Sends the 1,000 bookings to the endpoint and counts |
 | `release/watch.py` | Calls the endpoint every 5 seconds during a release and says which model answered |
-| `infra/up.py`, `down.py` | The roles, alarms, OIDC provider and bucket in AWS, and their removal |
+| `infra/up.py`, `down.py` | The endpoint's role, the alarms, the bucket and the GitHub Actions IAM user with its access key, and their removal |
 | `infra/protect.sh` | The GitHub ruleset that makes the gate required |
 | `requirements.txt` | boto3, the AWS SDK for Python, which every AWS step uses |
 | `.github/workflows/release.yml`, `rollback.yml` | The pipeline |

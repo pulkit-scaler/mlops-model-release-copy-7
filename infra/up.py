@@ -1,18 +1,14 @@
 """Makes what the pipeline needs in AWS: the bucket, the role the endpoint runs as,
-the two alarms that guard a release, GitHub's OIDC provider, and the role GitHub
-Actions assumes.
+the two alarms that guard a release, and an IAM user for GitHub Actions with an
+access key. It prints the key, once, for the two GitHub secrets.
 
-    GH_TOKEN=$(gh auth token) python infra/up.py
+    python infra/up.py
 
-Safe to run twice. Needs AWS credentials for us-east-1, and GH_TOKEN, a GitHub token
-that can read this repository.
+Safe to run twice. Each run makes a new access key and deletes the old one, so after
+a second run the secrets in GitHub must be set again. Needs AWS credentials for us-east-1.
 """
 import json
-import os
-import re
-import subprocess
 import sys
-import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -22,17 +18,6 @@ from config import ACCOUNT, BUCKET, ENDPOINT, REGION, session  # noqa: E402
 iam = session.client("iam")
 s3 = session.client("s3")
 cloudwatch = session.client("cloudwatch")
-token = os.environ.get("GH_TOKEN") or sys.exit("needs GH_TOKEN, a GitHub token that can read your repository")
-
-# owner/name of this clone's GitHub repository, from its remote, and its numeric IDs
-remote = subprocess.run(["git", "remote", "get-url", "origin"], cwd=ROOT,
-                        capture_output=True, text=True, check=True).stdout.strip()
-github_repo = re.sub(r"^.*[:/]([^/:]+/[^/]+?)(\.git)?$", r"\1", remote)
-request = urllib.request.Request(f"https://api.github.com/repos/{github_repo}",
-                                 headers={"Authorization": f"Bearer {token}"})
-repo = json.load(urllib.request.urlopen(request))
-owner, name = github_repo.split("/")
-prefix = f"repo:{owner}@{repo['owner']['id']}/{name}@{repo['id']}"
 
 # The bucket the model files go into. Quick setup makes the same one.
 try:
@@ -86,29 +71,30 @@ cloudwatch.put_metric_alarm(
     Dimensions=dimensions, Statistic="Average", Period=60, EvaluationPeriods=2, Threshold=500000,
     ComparisonOperator="GreaterThanThreshold", TreatMissingData="notBreaching")
 
-# GitHub's OIDC provider, once per account
-providers = [p["Arn"] for p in iam.list_open_id_connect_providers()["OpenIDConnectProviderList"]
-             if p["Arn"].endswith("/token.actions.githubusercontent.com")]
-oidc_arn = providers[0] if providers else iam.create_open_id_connect_provider(
-    Url="https://token.actions.githubusercontent.com", ClientIDList=["sts.amazonaws.com"])["OpenIDConnectProviderArn"]
+# The user GitHub Actions signs in as. Unlike a role, a user has no trust policy, only a
+# permission policy and a key. The register job, the deploy job and the rollback job all use it.
+USER = "hotel-release-github"
+try:
+    iam.get_user(UserName=USER)
+except iam.exceptions.NoSuchEntityException:
+    iam.create_user(UserName=USER)
+iam.put_user_policy(
+    UserName=USER, PolicyName="release-model",
+    PolicyDocument=json.dumps({"Version": "2012-10-17", "Statement": [
+        allow(["s3:PutObject", "s3:GetObject"], f"arn:aws:s3:::{BUCKET}/hotel/releases/*"),
+        allow(["sagemaker:DescribeModelPackageGroup", "sagemaker:CreateModelPackageGroup",
+               "sagemaker:CreateModelPackage", "sagemaker:DescribeModelPackage",
+               "sagemaker:UpdateModelPackage", "sagemaker:ListModelPackages"]),
+        allow(["sagemaker:CreateModel", "sagemaker:DescribeModel", "sagemaker:CreateEndpointConfig",
+               "sagemaker:DescribeEndpointConfig", "sagemaker:CreateEndpoint", "sagemaker:UpdateEndpoint",
+               "sagemaker:DescribeEndpoint", "sagemaker:InvokeEndpoint"]),
+        allow("iam:PassRole", f"arn:aws:iam::{ACCOUNT}:role/hotel-release-exec",
+              StringEquals={"iam:PassedToService": "sagemaker.amazonaws.com"})]}))
 
-# The role GitHub Actions assumes. Two kinds of job use it: the register job runs on
-# main, and the deploy and rollback jobs run in the production environment.
-role("hotel-release-github",
-     {"Version": "2012-10-17", "Statement": [{
-         "Effect": "Allow", "Principal": {"Federated": oidc_arn}, "Action": "sts:AssumeRoleWithWebIdentity",
-         "Condition": {"StringEquals": {"token.actions.githubusercontent.com:aud": "sts.amazonaws.com"},
-                       "StringLike": {"token.actions.githubusercontent.com:sub": [
-                           f"{prefix}:ref:refs/heads/main", f"{prefix}:environment:production"]}}}]},
-     "release-model",
-     {"Version": "2012-10-17", "Statement": [
-         allow(["s3:PutObject", "s3:GetObject"], f"arn:aws:s3:::{BUCKET}/hotel/releases/*"),
-         allow(["sagemaker:DescribeModelPackageGroup", "sagemaker:CreateModelPackageGroup",
-                "sagemaker:CreateModelPackage", "sagemaker:DescribeModelPackage",
-                "sagemaker:UpdateModelPackage", "sagemaker:ListModelPackages"]),
-         allow(["sagemaker:CreateModel", "sagemaker:DescribeModel", "sagemaker:CreateEndpointConfig",
-                "sagemaker:DescribeEndpointConfig", "sagemaker:CreateEndpoint", "sagemaker:UpdateEndpoint",
-                "sagemaker:DescribeEndpoint", "sagemaker:InvokeEndpoint"]),
-         allow("iam:PassRole", f"arn:aws:iam::{ACCOUNT}:role/hotel-release-exec",
-               StringEquals={"iam:PassedToService": "sagemaker.amazonaws.com"})]})
-print(f"role for the AWS_ROLE_ARN secret: arn:aws:iam::{ACCOUNT}:role/hotel-release-github")
+# AWS shows a secret access key once, when the key is made, so a second run cannot print the
+# old one. It deletes the old keys and makes a new one, which the secrets then have to match.
+for old in iam.list_access_keys(UserName=USER)["AccessKeyMetadata"]:
+    iam.delete_access_key(UserName=USER, AccessKeyId=old["AccessKeyId"])
+key = iam.create_access_key(UserName=USER)["AccessKey"]
+print(f"AWS_ACCESS_KEY_ID      {key['AccessKeyId']}")
+print(f"AWS_SECRET_ACCESS_KEY  {key['SecretAccessKey']}")
