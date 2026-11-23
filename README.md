@@ -20,3 +20,5 @@ A model change goes through a pull request, a gate, a registry version, an appro
 
 Models, data and container come from the Hotel booking demand datasets (Antonio, de Almeida, Nunes, Data in Brief 22,
 2019, CC BY 4.0) and the Model Registry class.
+
+Release notes live in the pull requests.
